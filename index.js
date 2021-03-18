@@ -1,3 +1,6 @@
+const FACE_DETECT_SIZE = 128;
+
+
 const inputVideo = document.getElementById("inputVideo");
 const outputCanvas = document.getElementById("outputCanvas");
 const outputCanvasContext = outputCanvas.getContext("2d");
@@ -5,7 +8,7 @@ const backendOutput = document.getElementById("backendOutput");
 
 
 async function main(blazefaceAnchors) {
-    load_settings();
+    loadSettings();
 
     const faceDetModel = await tf.loadGraphModel("https://tfhub.dev/tensorflow/tfjs-model/blazeface/1/default/1", { fromTFHub: true });
                                              
@@ -15,43 +18,46 @@ async function main(blazefaceAnchors) {
     outputCanvas.height = sourceSize[0];
     outputCanvas.width = sourceSize[1];
 
-    const faceDetSize = sourceSize[0] > sourceSize[1] ? [128, Math.round(sourceSize[1] * 128 / sourceSize[0])] :
-      (sourceSize[1] > sourceSize[0] ? [Math.round(sourceSize[0] * 128 / sourceSize[1]), 128] : [128, 128]);
+    const faceDetSize = sourceSize[0] > sourceSize[1] ?
+      [FACE_DETECT_SIZE, Math.round(sourceSize[1] * FACE_DETECT_SIZE / sourceSize[0])] :
+      (sourceSize[1] > sourceSize[0] ?
+        [Math.round(sourceSize[0] * FACE_DETECT_SIZE / sourceSize[1]), FACE_DETECT_SIZE] :
+        [FACE_DETECT_SIZE, FACE_DETECT_SIZE]);
     
-    const faceDetPadding = [[Math.ceil((128 - faceDetSize[0]) / 2), Math.floor((128 - faceDetSize[0]) / 2)],
-                            [Math.ceil((128 - faceDetSize[1]) / 2), Math.floor((128 - faceDetSize[1]) / 2)],
+    const faceDetPadding = [[Math.ceil((FACE_DETECT_SIZE - faceDetSize[0]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[0]) / 2)],
+                            [Math.ceil((FACE_DETECT_SIZE - faceDetSize[1]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[1]) / 2)],
                             [0, 0]]
     console.log(faceDetPadding);
     
     outputCanvasContext.font = "18px Arial MS";
 
-    let fps_ema = -1,
-        prev_frame_time = -1;
+    let fpsEMA = -1,
+        prevFrameTime = -1;
     while (true) {
       const img = await webcam.capture();
 
-      const faceRect = await get_face_rect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
+      const faceRect = await getFaceRect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
       outputCanvasContext.drawImage(inputVideo, 0, 0);
       if (faceRect[0] > 0.9) {
         plotFaceRect(faceRect);
-        //plot_landmarks(predictions);
+        // plotLandmarks(predictions);
       }
 
-      let curr_frame_time = Date.now();
-      if (prev_frame_time >= 0) {
-        fps_ema = calc_fps(prev_frame_time, curr_frame_time, fps_ema);
+      let currFrameTime = Date.now();
+      if (prevFrameTime >= 0) {
+        fpsEMA = calcFPS(prevFrameTime, currFrameTime, fpsEMA);
       }
       outputCanvasContext.fillStyle = "red";
-      outputCanvasContext.fillText(Math.round(fps_ema) + " FPS", 5, 20);
-      prev_frame_time = curr_frame_time;
+      outputCanvasContext.fillText(Math.round(fpsEMA) + " FPS", 5, 20);
+      prevFrameTime = currFrameTime;
 
       img.dispose();
-       
+      
       await tf.nextFrame();
     }
 }
 
-function load_settings() {
+function loadSettings() {
   let url = new URL(window.location.href);
 
   let backend = url.searchParams.get("back") ?? "webgl";
@@ -59,56 +65,72 @@ function load_settings() {
   backendOutput.innerText = "Backend: " + tf.getBackend();
 }
 
-async function get_face_rect(faceDetModel, img, sourceSize, targetSize, padding, anchors) {
-  const faceDetInput = tf.tidy(() => {
-    const scale = tf.scalar(127.5);
-    const offset = tf.scalar(1);
-    const result = img.resizeBilinear(targetSize).div(scale).sub(offset).pad(padding, 0).reshape([1, 128, 128, 3]);
-    return result;
-  });
+async function getFaceRect(faceDetModel, img, sourceSize, targetSize, padding, anchors) {
+  const faceDetInput = tf.tidy(() => preprocessFaceDet(img, targetSize, padding));
     
   let predictions = await faceDetModel.predict(faceDetInput);
   faceDetInput.dispose();
   
-  const result = tf.tidy(() => {
-    const squeezedPred = predictions.squeeze();
-    const logits = squeezedPred.slice([0, 0], [-1, 1]).squeeze();
-    const bestRectIDX = logits.argMax();
-    const bestPred = squeezedPred.gather(bestRectIDX).squeeze();
-    const bestRect = bestPred.slice(0, 5);
-    const anchor = anchors.gather(bestRectIDX).squeeze();
-    return [bestRect, anchor];
-  });
+  const result = tf.tidy(() => getBestRect(predictions, anchors));
   predictions.dispose();
   
-  const bestRect = await result[0].data();
-  const anchor = await result[1].data();
-
+  const faceRect = await result[0].data();
   result[0].dispose();
+  const anchor = await result[1].data();
   result[1].dispose();
 
-  bestRect[0] = 1 / (1 + Math.exp(-bestRect[0]));
+  postprocessFaceRect(faceRect, anchor, sourceSize, targetSize, padding);
 
-  bestRect[1] += anchor[0] * 128 - padding[1][0];
-  bestRect[2] += anchor[1] * 128 - padding[0][0];
-  bestRect[3] *= anchor[2];
-  bestRect[4] *= anchor[3];
+  return faceRect;
+}
+
+function preprocessFaceDet(img, targetSize, padding) {
+  /* Transforms the input image into a (128 x 128) tensor while keeping the aspect
+   * ratio (what is expected by the corresponding face detection model), resulting
+   * in potential letterboxing in the transformed image.
+   */
+
+  const scale = tf.scalar(127.5);
+  const offset = tf.scalar(1);
+  const result = img.resizeBilinear(targetSize)
+    .div(scale)
+    .sub(offset)
+    .pad(padding, 0)
+    .reshape([1, FACE_DETECT_SIZE, FACE_DETECT_SIZE, 3]);
+  return result;
+}
+
+function getBestRect(predictions, anchors) {
+  const squeezedPred = predictions.squeeze();
+  const logits = squeezedPred.slice([0, 0], [-1, 1]).squeeze();
+  const bestRectIDX = logits.argMax();
+  const bestPred = squeezedPred.gather(bestRectIDX).squeeze();
+  const bestRect = bestPred.slice(0, 5);
+  const anchor = anchors.gather(bestRectIDX).squeeze();
+  return [bestRect, anchor];
+}
+
+function postprocessFaceRect(rect, anchor, sourceSize, targetSize, padding) {
+  rect[0] = 1 / (1 + Math.exp(-rect[0]));
+
+  rect[1] += anchor[0] * FACE_DETECT_SIZE - padding[1][0];
+  rect[2] += anchor[1] * FACE_DETECT_SIZE - padding[0][0];
+  rect[3] *= anchor[2];
+  rect[4] *= anchor[3];
     
   scale = sourceSize[0] / targetSize[0];
   for (let i = 1; i < 5; i++) {
-    bestRect[i] *= scale;
+    rect[i] *= scale;
   }
 
-  bestRect[1] -= bestRect[3] / 2;
-  bestRect[2] -= bestRect[4] / 2;
-  bestRect[3] += bestRect[1];
-  bestRect[4] += bestRect[2];
+  rect[1] -= rect[3] / 2;
+  rect[2] -= rect[4] / 2;
+  rect[3] += rect[1];
+  rect[4] += rect[2];
 
   for (let i = 1; i < 5; i++) {
-    bestRect[i] = Math.round(bestRect[i]);
+    rect[i] = Math.round(rect[i]);
   }
-
-  return bestRect;
 }
 
 function plotFaceRect(faceRect) {
@@ -120,7 +142,7 @@ function plotFaceRect(faceRect) {
   outputCanvasContext.stroke();
 }
 
-function plot_landmarks(predictions) {
+function plotLandmarks(predictions) {
   outputCanvasContext.fillStyle = "green";
   if (predictions.length > 0) {
     for (let i = 0; i < predictions.length; i++) {
@@ -136,15 +158,15 @@ function plot_landmarks(predictions) {
   }
 }
 
-function calc_fps(prev_frame_time, curr_frame_time, fps_ema) {
-    let curr_fps = 1000 / (curr_frame_time - prev_frame_time);
-    if (fps_ema >= 0)
+function calcFPS(prevFrameTime, currFrameTime, fpsEMA) {
+    let currFPS = 1000 / (currFrameTime - prevFrameTime);
+    if (fpsEMA >= 0)
     {
-        fps_ema = 0.05 * curr_fps + (1 - 0.05) * fps_ema;
+        fpsEMA = 0.05 * currFPS + (1 - 0.05) * fpsEMA;
     }
     else
     {
-        fps_ema = curr_fps;
+        fpsEMA = currFPS;
     }
-    return fps_ema;
+    return fpsEMA;
 }
