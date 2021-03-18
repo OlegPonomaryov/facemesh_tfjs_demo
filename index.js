@@ -28,7 +28,6 @@ async function main(blazefaceAnchors) {
     let fps_ema = -1,
         prev_frame_time = -1;
     while (true) {
-      tf.engine().startScope()
       const img = await webcam.capture();
 
       const faceRect = await get_face_rect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
@@ -47,11 +46,7 @@ async function main(blazefaceAnchors) {
       prev_frame_time = curr_frame_time;
 
       img.dispose();
-      
-      console.log(tf.memory());
-
-      tf.engine().endScope()
-  
+       
       await tf.nextFrame();
     }
 }
@@ -72,7 +67,7 @@ async function get_face_rect(faceDetModel, img, sourceSize, targetSize, padding,
     return result;
   });
     
-  let predictions = faceDetModel.predict(faceDetInput);
+  let predictions = await faceDetModel.predict(faceDetInput);
   faceDetInput.dispose();
   
   const result = tf.tidy(() => {
