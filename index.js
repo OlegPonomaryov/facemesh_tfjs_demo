@@ -1,9 +1,12 @@
 const inputVideo = document.getElementById("inputVideo");
 const outputCanvas = document.getElementById("outputCanvas");
 const outputCanvasContext = outputCanvas.getContext("2d");
+const backendOutput = document.getElementById("backendOutput");
 
 
-async function main() { 
+async function main() {
+    load_settings();
+    
     let net = await faceLandmarksDetection.load(
       faceLandmarksDetection.SupportedPackages.mediapipeFacemesh,
       {
@@ -44,6 +47,14 @@ async function main() {
   
       await tf.nextFrame();
     }
+}
+
+function load_settings() {
+  let url = new URL(window.location.href);
+
+  let backend = url.searchParams.get("back") ?? "webgl";
+  tf.setBackend(backend);
+  backendOutput.innerText = "Backend: " + tf.getBackend();
 }
 
 function plot_landmarks(predictions) {
