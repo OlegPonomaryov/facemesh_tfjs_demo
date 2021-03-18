@@ -16,20 +16,19 @@ async function main(blazefaceAnchors) {
     outputCanvas.width = sourceSize[1];
 
     const faceDetSize = sourceSize[0] > sourceSize[1] ? [128, Math.round(sourceSize[1] * 128 / sourceSize[0])] :
-      (sourceSize[1] > sourceSize[0] ?[Math.round(sourceSize[0] * 128 / sourceSize[1]), 128] : [128, 128]);
-
-    console.log(faceDetSize);
+      (sourceSize[1] > sourceSize[0] ? [Math.round(sourceSize[0] * 128 / sourceSize[1]), 128] : [128, 128]);
     
     const faceDetPadding = [[Math.ceil((128 - faceDetSize[0]) / 2), Math.floor((128 - faceDetSize[0]) / 2)],
                             [Math.ceil((128 - faceDetSize[1]) / 2), Math.floor((128 - faceDetSize[1]) / 2)],
                             [0, 0]]
     console.log(faceDetPadding);
-
+    
     outputCanvasContext.font = "18px Arial MS";
 
     let fps_ema = -1,
         prev_frame_time = -1;
     while (true) {
+      tf.engine().startScope()
       const img = await webcam.capture();
 
       const faceRect = await get_face_rect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
@@ -38,7 +37,6 @@ async function main(blazefaceAnchors) {
         plotFaceRect(faceRect);
         //plot_landmarks(predictions);
       }
-
 
       let curr_frame_time = Date.now();
       if (prev_frame_time >= 0) {
@@ -49,6 +47,10 @@ async function main(blazefaceAnchors) {
       prev_frame_time = curr_frame_time;
 
       img.dispose();
+      
+      console.log(tf.memory());
+
+      tf.engine().endScope()
   
       await tf.nextFrame();
     }
@@ -71,19 +73,24 @@ async function get_face_rect(faceDetModel, img, sourceSize, targetSize, padding,
   });
     
   let predictions = faceDetModel.predict(faceDetInput);
+  faceDetInput.dispose();
   
   const result = tf.tidy(() => {
-    predictions = predictions.squeeze();
-    const logits = predictions.slice([0, 0], [-1, 1]).squeeze();
+    const squeezedPred = predictions.squeeze();
+    const logits = squeezedPred.slice([0, 0], [-1, 1]).squeeze();
     const bestRectIDX = logits.argMax();
-    const bestPred = predictions.gather(bestRectIDX).squeeze();
+    const bestPred = squeezedPred.gather(bestRectIDX).squeeze();
     const bestRect = bestPred.slice(0, 5);
     const anchor = anchors.gather(bestRectIDX).squeeze();
     return [bestRect, anchor];
   });
+  predictions.dispose();
   
   const bestRect = await result[0].data();
   const anchor = await result[1].data();
+
+  result[0].dispose();
+  result[1].dispose();
 
   bestRect[0] = 1 / (1 + Math.exp(-bestRect[0]));
 
