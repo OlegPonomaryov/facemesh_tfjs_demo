@@ -4,21 +4,19 @@ const outputCanvasContext = outputCanvas.getContext("2d");
 const backendOutput = document.getElementById("backendOutput");
 
 
-async function main() {
+async function main(blazefaceAnchors) {
     load_settings();
-
 
     const faceDetModel = await tf.loadGraphModel("https://tfhub.dev/tensorflow/tfjs-model/blazeface/1/default/1", { fromTFHub: true });
                                              
     const webcam = await tf.data.webcam(inputVideo);
 
-    const videoWidth = inputVideo.videoWidth,
-          videoHeight = inputVideo.videoHeight;
-    outputCanvas.width = videoWidth;
-    outputCanvas.height = videoHeight;
+    const sourceSize = [inputVideo.videoHeight, inputVideo.videoWidth]
+    outputCanvas.height = sourceSize[0];
+    outputCanvas.width = sourceSize[1];
 
-    const faceDetSize = videoHeight > videoWidth ? [128, Math.round(videoWidth * 128 / videoHeight)] :
-      (videoWidth > videoHeight ?[Math.round(videoHeight * 128 / videoWidth), 128] : [128, 128]);
+    const faceDetSize = sourceSize[0] > sourceSize[1] ? [128, Math.round(sourceSize[1] * 128 / sourceSize[0])] :
+      (sourceSize[1] > sourceSize[0] ?[Math.round(sourceSize[0] * 128 / sourceSize[1]), 128] : [128, 128]);
 
     console.log(faceDetSize);
     
@@ -34,11 +32,13 @@ async function main() {
     while (true) {
       const img = await webcam.capture();
 
-      const faceRect = await get_face_rect(faceDetModel, img, faceDetSize, faceDetPadding);
-      //console.log(faceRect);
-
+      const faceRect = await get_face_rect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
       outputCanvasContext.drawImage(inputVideo, 0, 0);
-      //plot_landmarks(predictions);
+      if (faceRect[0] > 0.9) {
+        plotFaceRect(faceRect);
+        //plot_landmarks(predictions);
+      }
+
 
       let curr_frame_time = Date.now();
       if (prev_frame_time >= 0) {
@@ -62,25 +62,60 @@ function load_settings() {
   backendOutput.innerText = "Backend: " + tf.getBackend();
 }
 
-async function get_face_rect(faceDetModel, img, size, padding) {
+async function get_face_rect(faceDetModel, img, sourceSize, targetSize, padding, anchors) {
   const faceDetInput = tf.tidy(() => {
     const scale = tf.scalar(127.5);
     const offset = tf.scalar(1);
-    const result = img.resizeBilinear(size).div(scale).sub(offset).pad(padding, 0).reshape([1, 128, 128, 3]);
+    const result = img.resizeBilinear(targetSize).div(scale).sub(offset).pad(padding, 0).reshape([1, 128, 128, 3]);
     return result;
   });
     
   let predictions = faceDetModel.predict(faceDetInput);
   
-  const bestRect = tf.tidy(() => {
+  const result = tf.tidy(() => {
     predictions = predictions.squeeze();
     const logits = predictions.slice([0, 0], [-1, 1]).squeeze();
     const bestRectIDX = logits.argMax();
     const bestPred = predictions.gather(bestRectIDX).squeeze();
     const bestRect = bestPred.slice(0, 5);
-    return bestRect;
+    const anchor = anchors.gather(bestRectIDX).squeeze();
+    return [bestRect, anchor];
   });
-  return await bestRect.data();
+  
+  const bestRect = await result[0].data();
+  const anchor = await result[1].data();
+
+  bestRect[0] = 1 / (1 + Math.exp(-bestRect[0]));
+
+  bestRect[1] += anchor[0] * 128 - padding[1][0];
+  bestRect[2] += anchor[1] * 128 - padding[0][0];
+  bestRect[3] *= anchor[2];
+  bestRect[4] *= anchor[3];
+    
+  scale = sourceSize[0] / targetSize[0];
+  for (let i = 1; i < 5; i++) {
+    bestRect[i] *= scale;
+  }
+
+  bestRect[1] -= bestRect[3] / 2;
+  bestRect[2] -= bestRect[4] / 2;
+  bestRect[3] += bestRect[1];
+  bestRect[4] += bestRect[2];
+
+  for (let i = 1; i < 5; i++) {
+    bestRect[i] = Math.round(bestRect[i]);
+  }
+
+  return bestRect;
+}
+
+function plotFaceRect(faceRect) {
+  outputCanvasContext.strokeStyle = "green";
+  outputCanvasContext.lineWidth = 2;
+  outputCanvasContext.beginPath();
+  outputCanvasContext.rect(
+    faceRect[1], faceRect[2], faceRect[3] - faceRect[1], faceRect[4] - faceRect[2]);
+  outputCanvasContext.stroke();
 }
 
 function plot_landmarks(predictions) {
@@ -111,5 +146,3 @@ function calc_fps(prev_frame_time, curr_frame_time, fps_ema) {
     }
     return fps_ema;
 }
-
-main();
