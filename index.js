@@ -43,7 +43,7 @@ async function main(blazefaceAnchors) {
           drawMesh = false;
       if (faceRect[0] > 0.9) {
         drawRect = true;
-        faceMesh = await getFaceMesh(faceMeshModel, img, faceRect, sourceSize);
+        faceMesh = await getFaceMesh(faceMeshModel, img, faceRect);
         if (faceMesh[0] > 0.5) {
           drawMesh = true;
         }
@@ -149,11 +149,23 @@ function postprocessFaceRect(rect, anchor, sourceSize, targetSize, padding) {
     rect[i] = Math.round(rect[i]);
   }
 
+  padRect(rect, 0.25);
+
   rect[1] = Math.max(0, rect[1]);
   rect[2] = Math.max(0, rect[2]);
   rect[3] = Math.min(sourceSize[1] - 1, rect[3]);
   rect[4] = Math.min(sourceSize[0] - 1, rect[4]);
 }
+
+function padRect(rect, scale) {
+  const widthPad = Math.round((rect[3] - rect[1]) * scale),
+        heightPad = Math.round((rect[4] - rect[2]) * scale);
+  rect[1] -= widthPad;
+  rect[3] += widthPad;
+  rect[2] -= heightPad;
+  rect[4] += heightPad;
+}
+
 
 function plotFaceRect(faceRect) {
   outputCanvasContext.strokeStyle = "purple";
@@ -165,11 +177,11 @@ function plotFaceRect(faceRect) {
 }
 
 
-async function getFaceMesh(faceMeshModel, img, faceRect, sourceSize) {
+async function getFaceMesh(faceMeshModel, img, faceRect) {
   const faceMeshInput = tf.tidy(() => preprocessFaceMesh(img, faceRect));
   const predictions = await faceMeshModel.predict(faceMeshInput);
 
-  const result = tf.tidy(() => postprocessFaceMesh(predictions, sourceSize, faceRect));
+  const result = tf.tidy(() => postprocessFaceMesh(predictions, faceRect));
   
   const faceProb = (await result[0].data())[0];
   result[0].dispose();
@@ -194,7 +206,7 @@ function preprocessFaceMesh(img, faceRect) {
   return result;
 }
 
-function postprocessFaceMesh(predictions, sourseSize, faceRect) {
+function postprocessFaceMesh(predictions, faceRect) {
   const prob = predictions[1];
   const scale = tf.tensor([(faceRect[3] - faceRect[1]) / FACE_MESH_SIZE, (faceRect[4] - faceRect[2]) / FACE_MESH_SIZE, 1])
   const offset = tf.tensor([faceRect[1], faceRect[2], 0])
@@ -211,7 +223,7 @@ function plotLandmarks(predictions) {
   outputCanvasContext.fillStyle = "green";
   for (let i = 0; i < predictions.length; i++) {
     outputCanvasContext.beginPath();
-    outputCanvasContext.arc(Math.round(predictions[i][0]), Math.round(predictions[i][1]), 1, 0, 2 * Math.PI);
+    outputCanvasContext.arc(Math.round(predictions[i][0]), Math.round(predictions[i][1]), 2, 0, 2 * Math.PI);
     outputCanvasContext.fill();
   }
 }
