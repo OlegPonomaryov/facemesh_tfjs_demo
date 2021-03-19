@@ -131,6 +131,11 @@ function postprocessFaceRect(rect, anchor, sourceSize, targetSize, padding) {
   for (let i = 1; i < 5; i++) {
     rect[i] = Math.round(rect[i]);
   }
+
+  rect[1] = Math.max(0, rect[1]);
+  rect[2] = Math.max(0, rect[2]);
+  rect[3] = Math.min(sourceSize[1] - 1, rect[3]);
+  rect[4] = Math.min(sourceSize[0] - 1, rect[4]);
 }
 
 function plotFaceRect(faceRect) {
