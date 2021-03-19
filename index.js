@@ -41,7 +41,6 @@ async function main(blazefaceAnchors) {
       const faceRect = prevFaceMesh != null ?
         faceRectFromFaceMesh(prevFaceMesh, sourceSize) :
         await detectFaceRect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
-      console.log(faceRect);
 
       if (faceRect[0] > 0.9) {
         const faceMesh = await detectFaceMesh(faceMeshModel, img, faceRect);
@@ -65,6 +64,8 @@ async function main(blazefaceAnchors) {
       prevFrameTime = currFrameTime;
 
       img.dispose();
+
+      console.log(tf.memory());
       
       await tf.nextFrame();
     }
@@ -106,7 +107,6 @@ function faceRectFromFaceMesh(faceMesh, sourceSize) {
 }
 
 async function detectFaceRect(faceDetModel, img, sourceSize, targetSize, padding, anchors) {
-  console.log("Face detect...");
   const faceDetInput = tf.tidy(() => preprocessFaceDet(img, targetSize, padding));
     
   let predictions = await faceDetModel.predict(faceDetInput);
@@ -203,7 +203,9 @@ function plotFaceRect(faceRect) {
 
 async function detectFaceMesh(faceMeshModel, img, faceRect) {
   const faceMeshInput = tf.tidy(() => preprocessFaceMesh(img, faceRect));
+
   const predictions = await faceMeshModel.predict(faceMeshInput);
+  faceMeshInput.dispose();
 
   const result = tf.tidy(() => postprocessFaceMesh(predictions, faceRect));
   
