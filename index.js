@@ -1,4 +1,5 @@
 const FACE_DETECT_SIZE = 128;
+const FACE_MESH_SIZE = 192;
 
 
 const inputVideo = document.getElementById("inputVideo");
@@ -11,6 +12,7 @@ async function main(blazefaceAnchors) {
     loadSettings();
 
     const faceDetModel = await tf.loadGraphModel("https://tfhub.dev/tensorflow/tfjs-model/blazeface/1/default/1", { fromTFHub: true });
+    const faceMeshModel = await tf.loadGraphModel("https://tfhub.dev/mediapipe/tfjs-model/facemesh/1/default/1", { fromTFHub: true });
                                              
     const webcam = await tf.data.webcam(inputVideo);
 
@@ -27,7 +29,6 @@ async function main(blazefaceAnchors) {
     const faceDetPadding = [[Math.ceil((FACE_DETECT_SIZE - faceDetSize[0]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[0]) / 2)],
                             [Math.ceil((FACE_DETECT_SIZE - faceDetSize[1]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[1]) / 2)],
                             [0, 0]]
-    console.log(faceDetPadding);
     
     outputCanvasContext.font = "18px Arial MS";
 
@@ -37,10 +38,26 @@ async function main(blazefaceAnchors) {
       const img = await webcam.capture();
 
       const faceRect = await getFaceRect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
-      outputCanvasContext.drawImage(inputVideo, 0, 0);
+      let faceMesh;
+      let drawRect = false,
+          drawMesh = false;
       if (faceRect[0] > 0.9) {
+        drawRect = true;
+        faceMesh = await getFaceMesh(faceMeshModel, img, faceRect, sourceSize);
+        if (faceMesh[0] > 0.5) {
+          drawMesh = true;
+        }
+      }
+
+      
+      outputCanvasContext.drawImage(inputVideo, 0, 0);
+
+      if (drawRect) {
         plotFaceRect(faceRect);
-        // plotLandmarks(predictions);
+      }
+
+      if (drawMesh) {
+        plotLandmarks(faceMesh[1]);
       }
 
       let currFrameTime = Date.now();
@@ -139,7 +156,7 @@ function postprocessFaceRect(rect, anchor, sourceSize, targetSize, padding) {
 }
 
 function plotFaceRect(faceRect) {
-  outputCanvasContext.strokeStyle = "green";
+  outputCanvasContext.strokeStyle = "purple";
   outputCanvasContext.lineWidth = 2;
   outputCanvasContext.beginPath();
   outputCanvasContext.rect(
@@ -147,19 +164,55 @@ function plotFaceRect(faceRect) {
   outputCanvasContext.stroke();
 }
 
+
+async function getFaceMesh(faceMeshModel, img, faceRect, sourceSize) {
+  const faceMeshInput = tf.tidy(() => preprocessFaceMesh(img, faceRect));
+  const predictions = await faceMeshModel.predict(faceMeshInput);
+
+  const result = tf.tidy(() => postprocessFaceMesh(predictions, sourceSize, faceRect));
+  
+  const faceProb = (await result[0].data())[0];
+  result[0].dispose();
+  const faceMesh = await result[1].array();
+  result[1].dispose();
+  
+  for (let i = 0; i < predictions.length; i++) {
+    predictions[i].dispose();
+  }
+
+  return [faceProb, faceMesh];
+}
+
+function preprocessFaceMesh(img, faceRect) {
+  const scale = tf.scalar(255);
+  const result = img
+    .slice([faceRect[2], faceRect[1], 0],
+           [faceRect[4] - faceRect[2], faceRect[3] - faceRect[1], -1])
+    .resizeBilinear([FACE_MESH_SIZE, FACE_MESH_SIZE])
+    .div(scale)
+    .reshape([1, FACE_MESH_SIZE, FACE_MESH_SIZE, 3]);
+  return result;
+}
+
+function postprocessFaceMesh(predictions, sourseSize, faceRect) {
+  const prob = predictions[1];
+  const scale = tf.tensor([(faceRect[3] - faceRect[1]) / FACE_MESH_SIZE, (faceRect[4] - faceRect[2]) / FACE_MESH_SIZE, 1])
+  const offset = tf.tensor([faceRect[1], faceRect[2], 0])
+  scale.print();
+  offset.print();
+  const mesh = predictions[2]
+    .reshape([-1, 3])
+    .mul(scale)
+    .add(offset);
+  return [prob, mesh];
+}
+
 function plotLandmarks(predictions) {
   outputCanvasContext.fillStyle = "green";
-  if (predictions.length > 0) {
-    for (let i = 0; i < predictions.length; i++) {
-      const keypoints = predictions[i].scaledMesh;
-      for (let i = 0; i < keypoints.length; i++) {
-        const [x, y, z] = keypoints[i];
-        
-        outputCanvasContext.beginPath();
-        outputCanvasContext.arc(x, y, 2, 0, 2 * Math.PI);
-        outputCanvasContext.fill();
-      }
-    }
+  for (let i = 0; i < predictions.length; i++) {
+    outputCanvasContext.beginPath();
+    outputCanvasContext.arc(Math.round(predictions[i][0]), Math.round(predictions[i][1]), 1, 0, 2 * Math.PI);
+    outputCanvasContext.fill();
   }
 }
 
