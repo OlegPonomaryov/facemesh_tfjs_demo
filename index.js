@@ -9,66 +9,69 @@ const backendOutput = document.getElementById("backendOutput");
 
 
 async function main(blazefaceAnchors) {
-    loadSettings();
+  loadSettings();
 
-    const faceDetModel = await tf.loadGraphModel("https://tfhub.dev/tensorflow/tfjs-model/blazeface/1/default/1", { fromTFHub: true });
-    const faceMeshModel = await tf.loadGraphModel("https://tfhub.dev/mediapipe/tfjs-model/facemesh/1/default/1", { fromTFHub: true });
-                                             
-    const webcam = await tf.data.webcam(inputVideo);
+  const faceDetModel = await tf.loadGraphModel("https://tfhub.dev/tensorflow/tfjs-model/blazeface/1/default/1", { fromTFHub: true });
+  const faceMeshModel = await tf.loadGraphModel("https://tfhub.dev/mediapipe/tfjs-model/facemesh/1/default/1", { fromTFHub: true });
 
-    const sourceSize = [inputVideo.videoHeight, inputVideo.videoWidth]
-    outputCanvas.height = sourceSize[0];
-    outputCanvas.width = sourceSize[1];
+  const webcam = await tf.data.webcam(inputVideo);
 
-    const faceDetSize = sourceSize[0] > sourceSize[1] ?
-      [FACE_DETECT_SIZE, Math.round(sourceSize[1] * FACE_DETECT_SIZE / sourceSize[0])] :
-      (sourceSize[1] > sourceSize[0] ?
-        [Math.round(sourceSize[0] * FACE_DETECT_SIZE / sourceSize[1]), FACE_DETECT_SIZE] :
-        [FACE_DETECT_SIZE, FACE_DETECT_SIZE]);
-    
-    const faceDetPadding = [[Math.ceil((FACE_DETECT_SIZE - faceDetSize[0]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[0]) / 2)],
-                            [Math.ceil((FACE_DETECT_SIZE - faceDetSize[1]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[1]) / 2)],
-                            [0, 0]]
-    
-    outputCanvasContext.font = "18px Arial MS";
+  const sourceSize = [inputVideo.videoHeight, inputVideo.videoWidth]
+  outputCanvas.height = sourceSize[0];
+  outputCanvas.width = sourceSize[1];
 
-    let fpsEMA = -1,
-        prevFrameTime = -1,
-        prevFaceMesh = null;
-    while (true) {
-      const img = await webcam.capture();
+  const faceDetSize = sourceSize[0] > sourceSize[1] ?
+    [FACE_DETECT_SIZE, Math.round(sourceSize[1] * FACE_DETECT_SIZE / sourceSize[0])] :
+    (sourceSize[1] > sourceSize[0] ?
+      [Math.round(sourceSize[0] * FACE_DETECT_SIZE / sourceSize[1]), FACE_DETECT_SIZE] :
+      [FACE_DETECT_SIZE, FACE_DETECT_SIZE]);
 
-      const faceRect = prevFaceMesh != null ?
-        faceRectFromFaceMesh(prevFaceMesh, sourceSize) :
-        await detectFaceRect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
+  const faceDetPadding = [[Math.ceil((FACE_DETECT_SIZE - faceDetSize[0]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[0]) / 2)],
+  [Math.ceil((FACE_DETECT_SIZE - faceDetSize[1]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[1]) / 2)],
+  [0, 0]]
 
-      if (faceRect[0] > 0.9) {
-        const faceMesh = await detectFaceMesh(faceMeshModel, img, faceRect);
-        prevFaceMesh = faceMesh[0] > 0.5 ? faceMesh[1] : null;
-        if (faceMesh[0] > 0.5) {
-          prevFaceMesh = faceMesh[1]
-        }
-      }
-      
-      outputCanvasContext.drawImage(inputVideo, 0, 0);
-      if (prevFaceMesh != null) {
-        plotLandmarks(prevFaceMesh);
-      }
+  outputCanvasContext.font = "18px Arial MS";
 
-      let currFrameTime = Date.now();
-      if (prevFrameTime >= 0) {
-        fpsEMA = calcFPS(prevFrameTime, currFrameTime, fpsEMA);
-      }
-      outputCanvasContext.fillStyle = "red";
-      outputCanvasContext.fillText(Math.round(fpsEMA) + " FPS", 5, 20);
-      prevFrameTime = currFrameTime;
+  let fpsEMA = -1,
+    prevFrameTime = -1,
+    approxFaceRect = null;
+  while (true) {
+    const img = await webcam.capture();
 
-      img.dispose();
-
-      console.log(tf.memory());
-      
-      await tf.nextFrame();
+    let faceRect;
+    if (approxFaceRect != null) {
+      padRect(approxFaceRect, sourceSize, 0.25);
+      faceRect = approxFaceRect;
     }
+    else {
+      faceRect = await detectFaceRect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
+    }
+
+    let faceMesh = null;
+    if (faceRect[0] > 0.9) {
+      faceMesh = await detectFaceMesh(faceMeshModel, img, faceRect);
+      if (faceMesh[0] > 0.5) {
+        approxFaceRect = faceMesh[2];
+      }
+    }
+
+    outputCanvasContext.drawImage(inputVideo, 0, 0);
+    if (faceMesh != null && faceMesh[0] > 0.5) {
+      plotLandmarks(faceMesh[1]);
+    }
+
+    let currFrameTime = Date.now();
+    if (prevFrameTime >= 0) {
+      fpsEMA = calcFPS(prevFrameTime, currFrameTime, fpsEMA);
+    }
+    outputCanvasContext.fillStyle = "red";
+    outputCanvasContext.fillText(Math.round(fpsEMA) + " FPS", 5, 20);
+    prevFrameTime = currFrameTime;
+
+    img.dispose();
+
+    await tf.nextFrame();
+  }
 }
 
 function loadSettings() {
@@ -79,42 +82,15 @@ function loadSettings() {
   backendOutput.innerText = "Backend: " + tf.getBackend();
 }
 
-function faceRectFromFaceMesh(faceMesh, sourceSize) {
-  let xMin = sourceSize[1], xMax = -1,
-      yMin = sourceSize[0], yMax = -1;
-
-  for (let i = 0; i < faceMesh.length; i++) {
-    if (faceMesh[i][0] < xMin) {
-      xMin = faceMesh[i][0];
-    }
-
-    if (faceMesh[i][0] > xMax) {
-      xMax = faceMesh[i][0];
-    }
-
-    if (faceMesh[i][1] < yMin) {
-      yMin = faceMesh[i][1];
-    }
-
-    if (faceMesh[i][1] > yMax) {
-      yMax = faceMesh[i][1];
-    }
-  }
-
-  const rect = [1, xMin, yMin, xMax, yMax];
-  padRect(rect, sourceSize, 0.25);
-  return rect;
-}
-
 async function detectFaceRect(faceDetModel, img, sourceSize, targetSize, padding, anchors) {
   const faceDetInput = tf.tidy(() => preprocessFaceDet(img, targetSize, padding));
-    
+
   let predictions = await faceDetModel.predict(faceDetInput);
   faceDetInput.dispose();
-  
+
   const result = tf.tidy(() => getBestRect(predictions, anchors));
   predictions.dispose();
-  
+
   const faceRect = await result[0].data();
   result[0].dispose();
   const anchor = await result[1].data();
@@ -158,7 +134,7 @@ function postprocessFaceRect(rect, anchor, sourceSize, targetSize, padding) {
   rect[2] += anchor[1] * FACE_DETECT_SIZE - padding[0][0];
   rect[3] *= anchor[2];
   rect[4] *= anchor[3];
-    
+
   scale = sourceSize[0] / targetSize[0];
   for (let i = 1; i < 5; i++) {
     rect[i] *= scale;
@@ -174,7 +150,7 @@ function postprocessFaceRect(rect, anchor, sourceSize, targetSize, padding) {
 
 function padRect(rect, sourceSize, scale) {
   const widthPad = Math.round((rect[3] - rect[1]) * scale),
-        heightPad = Math.round((rect[4] - rect[2]) * scale);
+    heightPad = Math.round((rect[4] - rect[2]) * scale);
   for (let i = 1; i < 5; i++) {
     rect[i] = Math.round(rect[i]);
   }
@@ -208,24 +184,31 @@ async function detectFaceMesh(faceMeshModel, img, faceRect) {
   faceMeshInput.dispose();
 
   const result = tf.tidy(() => postprocessFaceMesh(predictions, faceRect));
-  
+
   const faceProb = (await result[0].data())[0];
   result[0].dispose();
   const faceMesh = await result[1].array();
   result[1].dispose();
-  
+
+  faceRect = [1]
+  for (let i = 0; i < result[2].length; ++i) {
+    const coord = await result[2][i].data();
+    faceRect.push(coord[0]);
+    result[2][i].dispose();
+  }
+
   for (let i = 0; i < predictions.length; i++) {
     predictions[i].dispose();
   }
 
-  return [faceProb, faceMesh];
+  return [faceProb, faceMesh, faceRect];
 }
 
 function preprocessFaceMesh(img, faceRect) {
   const scale = tf.scalar(255);
   const result = img
     .slice([faceRect[2], faceRect[1], 0],
-           [faceRect[4] - faceRect[2], faceRect[3] - faceRect[1], -1])
+      [faceRect[4] - faceRect[2], faceRect[3] - faceRect[1], -1])
     .resizeBilinear([FACE_MESH_SIZE, FACE_MESH_SIZE])
     .div(scale)
     .reshape([1, FACE_MESH_SIZE, FACE_MESH_SIZE, 3]);
@@ -236,11 +219,11 @@ function postprocessFaceMesh(predictions, faceRect) {
   const prob = predictions[1];
   const scale = tf.tensor([(faceRect[3] - faceRect[1]) / FACE_MESH_SIZE, (faceRect[4] - faceRect[2]) / FACE_MESH_SIZE, 1])
   const offset = tf.tensor([faceRect[1], faceRect[2], 0])
-  const mesh = predictions[2]
-    .reshape([-1, 3])
-    .mul(scale)
-    .add(offset);
-  return [prob, mesh];
+  const predMesh = predictions[2].reshape([-1, 3]);
+  const mesh = predMesh.mul(scale).add(offset);
+  const x = mesh.slice([0, 0], [-1, 1]);
+  const y = mesh.slice([0, 1], [-1, 1]);
+  return [prob, mesh, [x.min(), y.min(), x.max(), y.max()]];
 }
 
 function plotLandmarks(predictions) {
@@ -253,14 +236,12 @@ function plotLandmarks(predictions) {
 }
 
 function calcFPS(prevFrameTime, currFrameTime, fpsEMA) {
-    let currFPS = 1000 / (currFrameTime - prevFrameTime);
-    if (fpsEMA >= 0)
-    {
-        fpsEMA = 0.05 * currFPS + (1 - 0.05) * fpsEMA;
-    }
-    else
-    {
-        fpsEMA = currFPS;
-    }
-    return fpsEMA;
+  let currFPS = 1000 / (currFrameTime - prevFrameTime);
+  if (fpsEMA >= 0) {
+    fpsEMA = 0.05 * currFPS + (1 - 0.05) * fpsEMA;
+  }
+  else {
+    fpsEMA = currFPS;
+  }
+  return fpsEMA;
 }
