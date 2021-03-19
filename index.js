@@ -33,31 +33,27 @@ async function main(blazefaceAnchors) {
     outputCanvasContext.font = "18px Arial MS";
 
     let fpsEMA = -1,
-        prevFrameTime = -1;
+        prevFrameTime = -1,
+        prevFaceMesh = null;
     while (true) {
       const img = await webcam.capture();
 
-      const faceRect = await getFaceRect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
-      let faceMesh;
-      let drawRect = false,
-          drawMesh = false;
+      const faceRect = prevFaceMesh != null ?
+        faceRectFromFaceMesh(prevFaceMesh, sourceSize) :
+        await detectFaceRect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
+      console.log(faceRect);
+
       if (faceRect[0] > 0.9) {
-        drawRect = true;
-        faceMesh = await getFaceMesh(faceMeshModel, img, faceRect);
+        const faceMesh = await detectFaceMesh(faceMeshModel, img, faceRect);
+        prevFaceMesh = faceMesh[0] > 0.5 ? faceMesh[1] : null;
         if (faceMesh[0] > 0.5) {
-          drawMesh = true;
+          prevFaceMesh = faceMesh[1]
         }
       }
-
       
       outputCanvasContext.drawImage(inputVideo, 0, 0);
-
-      if (drawRect) {
-        plotFaceRect(faceRect);
-      }
-
-      if (drawMesh) {
-        plotLandmarks(faceMesh[1]);
+      if (prevFaceMesh != null) {
+        plotLandmarks(prevFaceMesh);
       }
 
       let currFrameTime = Date.now();
@@ -82,7 +78,35 @@ function loadSettings() {
   backendOutput.innerText = "Backend: " + tf.getBackend();
 }
 
-async function getFaceRect(faceDetModel, img, sourceSize, targetSize, padding, anchors) {
+function faceRectFromFaceMesh(faceMesh, sourceSize) {
+  let xMin = sourceSize[1], xMax = -1,
+      yMin = sourceSize[0], yMax = -1;
+
+  for (let i = 0; i < faceMesh.length; i++) {
+    if (faceMesh[i][0] < xMin) {
+      xMin = faceMesh[i][0];
+    }
+
+    if (faceMesh[i][0] > xMax) {
+      xMax = faceMesh[i][0];
+    }
+
+    if (faceMesh[i][1] < yMin) {
+      yMin = faceMesh[i][1];
+    }
+
+    if (faceMesh[i][1] > yMax) {
+      yMax = faceMesh[i][1];
+    }
+  }
+
+  const rect = [1, xMin, yMin, xMax, yMax];
+  padRect(rect, sourceSize, 0.25);
+  return rect;
+}
+
+async function detectFaceRect(faceDetModel, img, sourceSize, targetSize, padding, anchors) {
+  console.log("Face detect...");
   const faceDetInput = tf.tidy(() => preprocessFaceDet(img, targetSize, padding));
     
   let predictions = await faceDetModel.predict(faceDetInput);
@@ -145,25 +169,25 @@ function postprocessFaceRect(rect, anchor, sourceSize, targetSize, padding) {
   rect[3] += rect[1];
   rect[4] += rect[2];
 
+  padRect(rect, sourceSize, 0.25);
+}
+
+function padRect(rect, sourceSize, scale) {
+  const widthPad = Math.round((rect[3] - rect[1]) * scale),
+        heightPad = Math.round((rect[4] - rect[2]) * scale);
   for (let i = 1; i < 5; i++) {
     rect[i] = Math.round(rect[i]);
   }
 
-  padRect(rect, 0.25);
+  rect[1] -= widthPad;
+  rect[3] += widthPad;
+  rect[2] -= heightPad;
+  rect[4] += heightPad;
 
   rect[1] = Math.max(0, rect[1]);
   rect[2] = Math.max(0, rect[2]);
   rect[3] = Math.min(sourceSize[1] - 1, rect[3]);
   rect[4] = Math.min(sourceSize[0] - 1, rect[4]);
-}
-
-function padRect(rect, scale) {
-  const widthPad = Math.round((rect[3] - rect[1]) * scale),
-        heightPad = Math.round((rect[4] - rect[2]) * scale);
-  rect[1] -= widthPad;
-  rect[3] += widthPad;
-  rect[2] -= heightPad;
-  rect[4] += heightPad;
 }
 
 
@@ -177,7 +201,7 @@ function plotFaceRect(faceRect) {
 }
 
 
-async function getFaceMesh(faceMeshModel, img, faceRect) {
+async function detectFaceMesh(faceMeshModel, img, faceRect) {
   const faceMeshInput = tf.tidy(() => preprocessFaceMesh(img, faceRect));
   const predictions = await faceMeshModel.predict(faceMeshInput);
 
@@ -210,8 +234,6 @@ function postprocessFaceMesh(predictions, faceRect) {
   const prob = predictions[1];
   const scale = tf.tensor([(faceRect[3] - faceRect[1]) / FACE_MESH_SIZE, (faceRect[4] - faceRect[2]) / FACE_MESH_SIZE, 1])
   const offset = tf.tensor([faceRect[1], faceRect[2], 0])
-  scale.print();
-  offset.print();
   const mesh = predictions[2]
     .reshape([-1, 3])
     .mul(scale)
