@@ -9,23 +9,30 @@ const backendOutput = document.getElementById("backendOutput");
 
 
 async function main(blazefaceAnchors) {
+  tf.enableProdMode();
+
   loadSettings();
+
+  const blazefaceAnchorsTensor = tf.tensor(blazefaceAnchors);
 
   const faceDetModel = await tf.loadGraphModel("https://tfhub.dev/tensorflow/tfjs-model/blazeface/1/default/1", { fromTFHub: true });
   const faceMeshModel = await tf.loadGraphModel("https://tfhub.dev/mediapipe/tfjs-model/facemesh/1/default/1", { fromTFHub: true });
 
   const webcam = await tf.data.webcam(inputVideo);
 
+  // Size of the source video
   const sourceSize = [inputVideo.videoHeight, inputVideo.videoWidth]
   outputCanvas.height = sourceSize[0];
   outputCanvas.width = sourceSize[1];
 
+  // Size of the source video, resized to fit into 128x128 without changing its aspect ratio
   const faceDetSize = sourceSize[0] > sourceSize[1] ?
     [FACE_DETECT_SIZE, Math.round(sourceSize[1] * FACE_DETECT_SIZE / sourceSize[0])] :
     (sourceSize[1] > sourceSize[0] ?
       [Math.round(sourceSize[0] * FACE_DETECT_SIZE / sourceSize[1]), FACE_DETECT_SIZE] :
       [FACE_DETECT_SIZE, FACE_DETECT_SIZE]);
 
+  // Padding of the resized video to make it exactly 128x128
   const faceDetPadding = [[Math.ceil((FACE_DETECT_SIZE - faceDetSize[0]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[0]) / 2)],
   [Math.ceil((FACE_DETECT_SIZE - faceDetSize[1]) / 2), Math.floor((FACE_DETECT_SIZE - faceDetSize[1]) / 2)],
   [0, 0]]
@@ -33,8 +40,8 @@ async function main(blazefaceAnchors) {
   outputCanvasContext.font = "18px Arial MS";
 
   let fpsEMA = -1,
-    prevFrameTime = -1,
-    approxFaceRect = null;
+      prevFrameTime = -1,
+      approxFaceRect = null;
   while (true) {
     const img = await webcam.capture();
 
@@ -44,7 +51,7 @@ async function main(blazefaceAnchors) {
       faceRect = approxFaceRect;
     }
     else {
-      faceRect = await detectFaceRect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchors);
+      faceRect = await detectFaceRect(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchorsTensor);
     }
 
     let faceMesh = null;
@@ -176,42 +183,42 @@ function plotFaceRect(faceRect) {
   outputCanvasContext.stroke();
 }
 
-
 async function detectFaceMesh(faceMeshModel, img, faceRect) {
   const faceMeshInput = tf.tidy(() => preprocessFaceMesh(img, faceRect));
 
-  const predictions = await faceMeshModel.predict(faceMeshInput);
+  const predictions = await Promise.all(faceMeshModel.predict(faceMeshInput));
   faceMeshInput.dispose();
 
-  const result = tf.tidy(() => postprocessFaceMesh(predictions, faceRect));
+  const resultTensors = tf.tidy(() => postprocessFaceMesh(predictions, faceRect));
 
-  const faceProb = (await result[0].data())[0];
-  result[0].dispose();
-  const faceMesh = await result[1].array();
-  result[1].dispose();
-
-  faceRect = [1]
-  for (let i = 0; i < result[2].length; ++i) {
-    const coord = await result[2][i].data();
-    faceRect.push(coord[0]);
-    result[2][i].dispose();
+  const result = await Promise.all(resultTensors.map(async d => d.array()));
+  for (let i = 0; i < resultTensors.length; i++) {
+    resultTensors[i].dispose();
   }
-
   for (let i = 0; i < predictions.length; i++) {
     predictions[i].dispose();
   }
 
-  return [faceProb, faceMesh, faceRect];
+  const faceProb = result[0][0];
+  const faceMesh = result[1];
+
+  let approxFaceRect = [1];
+  for (let i = 2; i < 6; i++) {
+    approxFaceRect.push(result[i]);
+  }
+
+  return [faceProb, faceMesh, approxFaceRect];
 }
 
-function preprocessFaceMesh(img, faceRect) {
+function preprocessFaceMesh(img, faceRect) { 
   const scale = tf.scalar(255);
-  const result = img
-    .slice([faceRect[2], faceRect[1], 0],
-      [faceRect[4] - faceRect[2], faceRect[3] - faceRect[1], -1])
-    .resizeBilinear([FACE_MESH_SIZE, FACE_MESH_SIZE])
-    .div(scale)
-    .reshape([1, FACE_MESH_SIZE, FACE_MESH_SIZE, 3]);
+  const batchedImg = img.reshape([1, img.shape[0], img.shape[1], img.shape[2]])
+  const boxes = [[faceRect[2] / img.shape[0], faceRect[1] / img.shape[1],
+                  faceRect[4] / img.shape[0], faceRect[3] / img.shape[1]]];
+  const boxInd = [0];
+  const cropSize = [FACE_MESH_SIZE, FACE_MESH_SIZE];
+  const result = tf.image.cropAndResize(
+    batchedImg, boxes, boxInd, cropSize).div(scale);
   return result;
 }
 
@@ -223,7 +230,7 @@ function postprocessFaceMesh(predictions, faceRect) {
   const mesh = predMesh.mul(scale).add(offset);
   const x = mesh.slice([0, 0], [-1, 1]);
   const y = mesh.slice([0, 1], [-1, 1]);
-  return [prob, mesh, [x.min(), y.min(), x.max(), y.max()]];
+  return [prob, mesh, x.min(), y.min(), x.max(), y.max()];
 }
 
 function plotLandmarks(predictions) {
