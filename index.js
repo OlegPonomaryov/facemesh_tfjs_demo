@@ -10,6 +10,9 @@ const backendOutput = document.getElementById("backendOutput");
 async function main(blazefaceAnchors) {
   loadSettings();
 
+
+  tf.enableProdMode();
+  const blazefaceAnchorsTensor = tf.tensor(blazefaceAnchors);
   const faceMeshModel = await tf.loadGraphModel("https://tfhub.dev/mediapipe/tfjs-model/facemesh/1/default/1", { fromTFHub: true });
 
   const webcam = await tf.data.webcam(inputVideo);
@@ -22,15 +25,15 @@ async function main(blazefaceAnchors) {
 
   const faceRectSize = Math.min(...sourceSize) / 2;
   const faceRect = [1,
-                    Math.round(sourceSize[1] / 2 - faceRectSize / 2),
-                    Math.round(sourceSize[0] / 2 - faceRectSize / 2),
-                    Math.round(sourceSize[1] / 2 + faceRectSize / 2),
-                    Math.round(sourceSize[0] / 2 + faceRectSize / 2)];
+    Math.round(sourceSize[1] / 2 - faceRectSize / 2),
+    Math.round(sourceSize[0] / 2 - faceRectSize / 2),
+    Math.round(sourceSize[1] / 2 + faceRectSize / 2),
+    Math.round(sourceSize[0] / 2 + faceRectSize / 2)];
   console.log(faceRect);
 
 
   let fpsEMA = -1,
-      prevFrameTime = -1;
+    prevFrameTime = -1;
   while (true) {
     const img = await webcam.capture();
 
@@ -51,6 +54,7 @@ async function main(blazefaceAnchors) {
     prevFrameTime = currFrameTime;
 
     img.dispose();
+    console.log(tf.memory());
 
     await tf.nextFrame();
   }
@@ -80,25 +84,25 @@ async function detectFaceMesh(faceMeshModel, img, faceRect) {
   const predictions = await faceMeshModel.predict(faceMeshInput);
   faceMeshInput.dispose();
 
-  const result = tf.tidy(() => postprocessFaceMesh(predictions, faceRect));
+  const resultTensors = tf.tidy(() => postprocessFaceMesh(predictions, faceRect));
 
-  const faceProb = (await result[0].data())[0];
-  result[0].dispose();
-  const faceMesh = await result[1].array();
-  result[1].dispose();
-
-  faceRect = [1]
-  for (let i = 0; i < result[2].length; ++i) {
-    const coord = await result[2][i].data();
-    faceRect.push(coord[0]);
-    result[2][i].dispose();
+  const result = await Promise.all(resultTensors.map(async d => d.array()));
+  for (let i = 0; i < resultTensors.length; i++) {
+    resultTensors[i].dispose();
   }
-
   for (let i = 0; i < predictions.length; i++) {
     predictions[i].dispose();
   }
 
-  return [faceProb, faceMesh, faceRect];
+  const faceProb = result[0][0];
+  const faceMesh = result[1];
+
+  let faceRest = [1];
+  for (let i = 2; i < 6; i++) {
+    faceRect.push(result[i]);
+  }
+
+  return [faceProb, faceMesh];
 }
 
 function preprocessFaceMesh(img, faceRect) {
@@ -120,7 +124,7 @@ function postprocessFaceMesh(predictions, faceRect) {
   const mesh = predMesh.mul(scale).add(offset);
   const x = mesh.slice([0, 0], [-1, 1]);
   const y = mesh.slice([0, 1], [-1, 1]);
-  return [prob, mesh, [x.min(), y.min(), x.max(), y.max()]];
+  return [prob, mesh, x.min(), y.min(), x.max(), y.max()];
 }
 
 function plotLandmarks(predictions) {
