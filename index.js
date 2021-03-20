@@ -57,9 +57,7 @@ async function main(blazefaceAnchors) {
     let faceMesh = null;
     if (faceRect[0] > 0.9) {
       faceMesh = await detectFaceMesh(faceMeshModel, img, faceRect);
-      if (faceMesh[0] > 0.5) {
-        approxFaceRect = faceMesh[2];
-      }
+      approxFaceRect = faceMesh[0] > 0.5 ? faceMesh[2] : null;
     }
 
     outputCanvasContext.drawImage(inputVideo, 0, 0);
@@ -243,9 +241,10 @@ function plotLandmarks(predictions) {
 }
 
 function calcFPS(prevFrameTime, currFrameTime, fpsEMA) {
-  let currFPS = 1000 / (currFrameTime - prevFrameTime);
+  const currFPS = 1000 / (currFrameTime - prevFrameTime);
   if (fpsEMA >= 0) {
-    fpsEMA = 0.05 * currFPS + (1 - 0.05) * fpsEMA;
+    const k = 0.05;
+    fpsEMA = k * currFPS + (1 - k) * fpsEMA;
   }
   else {
     fpsEMA = currFPS;
