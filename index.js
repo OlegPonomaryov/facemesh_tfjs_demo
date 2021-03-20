@@ -253,7 +253,7 @@ function plotFaceRect(faceRect) {
 function calcFPS(prevFrameTime, currFrameTime, fpsEMA) {
   const currFPS = 1000 / (currFrameTime - prevFrameTime);
   if (fpsEMA >= 0) {
-    const k = 0.05;
+    const k = 0.01;
     fpsEMA = k * currFPS + (1 - k) * fpsEMA;
   }
   else {
