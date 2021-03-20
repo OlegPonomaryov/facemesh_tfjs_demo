@@ -76,7 +76,7 @@ function plot_landmarks(predictions) {
 function calc_fps(prev_frame_time, curr_frame_time, fps_ema) {
   const curr_fps = 1000 / (curr_frame_time - prev_frame_time);
   if (fps_ema >= 0) {
-    const k = 0.05;
+    const k = 0.01;
     fps_ema = k * curr_fps + (1 - k) * fps_ema;
   }
   else {
