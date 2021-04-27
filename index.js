@@ -9,10 +9,10 @@ logLines = []
 
 async function main() {
   try {
-    log("DEBUG: Loading settings...");
+    log("DEBUG: Loading settings...\n");
     load_settings();
 
-    log("DEBUG: Loading the model...");
+    log("DEBUG: Loading the model...\n");
     let net = await faceLandmarksDetection.load(
       faceLandmarksDetection.SupportedPackages.mediapipeFacemesh,
       {
@@ -20,33 +20,32 @@ async function main() {
         maxFaces: 1
       });
 
-    log("DEBUG: Initializing a webcam...");
+    log("DEBUG: Initializing a webcam...\n");
     const webcam = await tf.data.webcam(inputVideo);
 
-    log("DEBUG: Applying input/output video settings...");
+    log("DEBUG: Applying input/output video settings...\n");
     let videoWidth = inputVideo.videoWidth,
       videoHeight = inputVideo.videoHeight;
-    frameSizeOutput.innerText = "Input video size: " +  videoWidth + "x" + videoHeight;
+    frameSizeOutput.innerText = "Input video size: " +  videoWidth + "x" + videoHeight
     outputCanvas.width = videoWidth;
     outputCanvas.height = videoHeight;
 
     outputCanvasContext.font = "18px Arial MS";
 
-    log("DEBUG: Starting the main loop...");
+    log("DEBUG: Starting the main loop...\n");
     let fps_ema = -1,
         prev_frame_time = -1;
     while (true) {
-      log("DEBUG: Obtaining the captured frame...");
+      log("DEBUG: Obraining the captured frame...\n");
       const img = await webcam.capture();
-      log("DEBUG: Frame size: " +  img.shape[1] + "x" + img.shape[0]);
 
-      log("DEBUG: Estimating faces...");
+      log("DEBUG: Estimating faces...\n");
       const predictions = await net.estimateFaces({
         input: img,
         predictIrises: false
       });
 
-      log("DEBUG: Drawing the output frame...");
+      log("DEBUG: Drawing the output frame...\n");
       outputCanvasContext.drawImage(inputVideo, 0, 0);
       plot_landmarks(predictions);
 
@@ -58,10 +57,10 @@ async function main() {
       outputCanvasContext.fillText(Math.round(fps_ema) + " FPS", 5, 20);
       prev_frame_time = curr_frame_time;
 
-      log("DEBUG: Disposing the current frame...");
+      log("DEBUG: Disposing the current frame...\n");
       img.dispose();
 
-      log("DEBUG: Waiting for the next frame...");
+      log("DEBUG: Waiting for the next frame...\n");
       await tf.nextFrame();
     }
   }
@@ -76,7 +75,7 @@ function log(message) {
   logLines.push(message);
   if (logLines.length > 15)
     logLines.shift();
-  logOutput.innerText = logLines.join("\n");
+  logOutput.innerText = logLines.join("");
 }
 
 function load_settings() {
@@ -85,6 +84,9 @@ function load_settings() {
   let backend = url.searchParams.get("back") ?? "webgl";
   tf.setBackend(backend);
   backendOutput.innerText = "Backend: " + tf.getBackend();
+
+  inputVideo.width = url.searchParams.get("width") ?? 640;
+  inputVideo.height = url.searchParams.get("height") ?? 420;
 }
 
 function plot_landmarks(predictions) {
