@@ -55,6 +55,9 @@ function load_settings() {
   let backend = url.searchParams.get("back") ?? "webgl";
   tf.setBackend(backend);
   backendOutput.innerText = "Backend: " + tf.getBackend();
+
+  inputVideo.width = url.searchParams.get("width") ?? 640;
+  inputVideo.height = url.searchParams.get("height") ?? 420;
 }
 
 function plot_landmarks(predictions) {
