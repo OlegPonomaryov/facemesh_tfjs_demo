@@ -2,51 +2,78 @@ const inputVideo = document.getElementById("inputVideo");
 const outputCanvas = document.getElementById("outputCanvas");
 const outputCanvasContext = outputCanvas.getContext("2d");
 const backendOutput = document.getElementById("backendOutput");
+const logOutput = document.getElementById("logOutput");
 
+logLines = []
 
 async function main() {
-  load_settings();
+  try {
+    log("DEBUG: Loading settings...\n");
+    load_settings();
 
-  let net = await faceLandmarksDetection.load(
-    faceLandmarksDetection.SupportedPackages.mediapipeFacemesh,
-    {
-      shouldLoadIrisModel: false,
-      maxFaces: 1
-    });
+    log("DEBUG: Loading the model...\n");
+    let net = await faceLandmarksDetection.load(
+      faceLandmarksDetection.SupportedPackages.mediapipeFacemesh,
+      {
+        shouldLoadIrisModel: false,
+        maxFaces: 1
+      });
 
-  const webcam = await tf.data.webcam(inputVideo);
+    log("DEBUG: Initializing a webcam...\n");
+    const webcam = await tf.data.webcam(inputVideo);
 
-  let videoWidth = inputVideo.videoWidth,
-    videoHeight = inputVideo.videoHeight;
-  outputCanvas.width = videoWidth;
-  outputCanvas.height = videoHeight;
+    log("DEBUG: Applying input/output video settings...\n");
+    let videoWidth = inputVideo.videoWidth,
+      videoHeight = inputVideo.videoHeight;
+    outputCanvas.width = videoWidth;
+    outputCanvas.height = videoHeight;
 
-  outputCanvasContext.font = "18px Arial MS";
+    outputCanvasContext.font = "18px Arial MS";
 
-  let fps_ema = -1,
-    prev_frame_time = -1;
-  while (true) {
-    const img = await webcam.capture();
-    const predictions = await net.estimateFaces({
-      input: img,
-      predictIrises: false
-    });
+    log("DEBUG: Starting the main loop...\n");
+    let fps_ema = -1,
+        prev_frame_time = -1;
+    while (true) {
+      log("DEBUG: Obraining the captured frame...\n");
+      const img = await webcam.capture();
 
-    outputCanvasContext.drawImage(inputVideo, 0, 0);
-    plot_landmarks(predictions);
+      log("DEBUG: Estimating faces...\n");
+      const predictions = await net.estimateFaces({
+        input: img,
+        predictIrises: false
+      });
 
-    let curr_frame_time = Date.now();
-    if (prev_frame_time >= 0) {
-      fps_ema = calc_fps(prev_frame_time, curr_frame_time, fps_ema);
+      log("DEBUG: Drawing the output frame...\n");
+      outputCanvasContext.drawImage(inputVideo, 0, 0);
+      plot_landmarks(predictions);
+
+      let curr_frame_time = Date.now();
+      if (prev_frame_time >= 0) {
+        fps_ema = calc_fps(prev_frame_time, curr_frame_time, fps_ema);
+      }
+      outputCanvasContext.fillStyle = "red";
+      outputCanvasContext.fillText(Math.round(fps_ema) + " FPS", 5, 20);
+      prev_frame_time = curr_frame_time;
+
+      log("DEBUG: Disposing the current frame...\n");
+      img.dispose();
+
+      log("DEBUG: Waiting for the next frame...\n");
+      await tf.nextFrame();
     }
-    outputCanvasContext.fillStyle = "red";
-    outputCanvasContext.fillText(Math.round(fps_ema) + " FPS", 5, 20);
-    prev_frame_time = curr_frame_time;
-
-    img.dispose();
-
-    await tf.nextFrame();
   }
+  catch (e) {
+    log("ERROR: " + e.message)
+  }
+}
+
+function log(message) {
+  const now = new Date();
+  message = "[" + now.getHours() + ":" + now.getMinutes() + ":" + now.getSeconds() + ":"+ now.getMilliseconds() + "] " + message;
+  logLines.push(message);
+  if (logLines.length > 15)
+    logLines.shift();
+  logOutput.innerText = logLines.join("");
 }
 
 function load_settings() {
