@@ -79,6 +79,9 @@ function loadSettings() {
   tf.setBackend(backend);
   backendOutput.innerText = "Backend: " + tf.getBackend();
 
+  inputVideo.width = url.searchParams.get("width") ?? 640;
+  inputVideo.height = url.searchParams.get("height") ?? 420;
+
   const boundingBox = url.searchParams.get("boundingBox") != null ?
     url.searchParams.get("boundingBox") == "true" : false;
 
