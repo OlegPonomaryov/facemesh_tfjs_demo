@@ -7,6 +7,8 @@ const outputCanvas = document.getElementById("outputCanvas");
 const outputCanvasContext = outputCanvas.getContext("2d");
 const backendOutput = document.getElementById("backendOutput");
 
+const ema_k = 0.01;
+
 
 async function main(blazefaceAnchors) {
   const settings = loadSettings();
@@ -39,16 +41,22 @@ async function main(blazefaceAnchors) {
 
   let fpsEMA = -1,
       prevFrameTime = -1,
+      landmarks_time_ema = -1,
+      is_warmup = true,
       approxFaceRect = null;
   while (true) {
     const img = await webcam.capture();
 
+    const landmarks_start = Date.now();
+    
     const faceRect = approxFaceRect != null ? approxFaceRect :
       await runFaceDet(faceDetModel, img, sourceSize, faceDetSize, faceDetPadding, blazefaceAnchorsTensor);
     padRect(faceRect, sourceSize, 0.25);
 
     const faceMesh = faceRect[0] > 0.9 ? await runFaceMesh(faceMeshModel, img, faceRect) : null;
     approxFaceRect = faceMesh != null && faceMesh[0] > 0.5 ? faceMesh[2] : null;
+
+    const landmarks_end = Date.now();
 
     outputCanvasContext.drawImage(inputVideo, 0, 0);
     if (faceRect[0] > 0.9 && settings.get("boundingBox"))
@@ -61,8 +69,15 @@ async function main(blazefaceAnchors) {
     if (prevFrameTime >= 0) {
       fpsEMA = calcFPS(prevFrameTime, currFrameTime, fpsEMA);
     }
+    landmarks_time = landmarks_end - landmarks_start
+    if (is_warmup)
+      is_warmup = false;
+    else
+      landmarks_time_ema = landmarks_time_ema < 0 ? landmarks_time : ema_k * landmarks_time + (1 - ema_k) * landmarks_time_ema;
+
     outputCanvasContext.fillStyle = "red";
     outputCanvasContext.fillText(Math.round(fpsEMA) + " FPS", 5, 20);
+    outputCanvasContext.fillText("Landmarks time: " + Math.round(landmarks_time_ema) + " ms", 5, 40);
     prevFrameTime = currFrameTime;
 
     img.dispose();
