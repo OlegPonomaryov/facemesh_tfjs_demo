@@ -24,13 +24,17 @@ async function main() {
   outputCanvasContext.font = "18px Arial MS";
 
   let fps_ema = -1,
-    prev_frame_time = -1;
+    prev_frame_time = -1,
+    landmarks_fps_ema = -1;
   while (true) {
     const img = await webcam.capture();
+    
+    const landmarks_start = Date.now();
     const predictions = await net.estimateFaces({
       input: img,
       predictIrises: false
     });
+    const landmarks_end = Date.now();
 
     outputCanvasContext.drawImage(inputVideo, 0, 0);
     plot_landmarks(predictions);
@@ -39,8 +43,11 @@ async function main() {
     if (prev_frame_time >= 0) {
       fps_ema = calc_fps(prev_frame_time, curr_frame_time, fps_ema);
     }
+    landmarks_fps_ema = calc_fps(landmarks_start, landmarks_end, landmarks_fps_ema);
+
     outputCanvasContext.fillStyle = "red";
     outputCanvasContext.fillText(Math.round(fps_ema) + " FPS", 5, 20);
+    outputCanvasContext.fillText(Math.round(landmarks_fps_ema) + " FPS (landmarks)", 5, 40);
     prev_frame_time = curr_frame_time;
 
     img.dispose();
@@ -76,8 +83,8 @@ function plot_landmarks(predictions) {
   }
 }
 
-function calc_fps(prev_frame_time, curr_frame_time, fps_ema) {
-  const curr_fps = 1000 / (curr_frame_time - prev_frame_time);
+function calc_fps(start_time, end_time, fps_ema) {
+  const curr_fps = 1000 / (end_time - start_time);
   if (fps_ema >= 0) {
     const k = 0.01;
     fps_ema = k * curr_fps + (1 - k) * fps_ema;
